@@ -7,6 +7,7 @@ type Config struct {
 	DBURL              string
 	MatchingEngineAddr string
 	KafkaBrokers       string
+	AccountServiceAddr string
 }
 
 func Load() *Config {
@@ -15,6 +16,7 @@ func Load() *Config {
 		DBURL:              getEnv("DB_URL", "postgres://mantis:mantis@localhost:5432/mantis_order?sslmode=disable"),
 		MatchingEngineAddr: getEnv("MATCHING_ENGINE_ADDR", "localhost:50051"),
 		KafkaBrokers:       getEnv("KAFKA_BROKERS", "localhost:9092"),
+		AccountServiceAddr: getEnv("ACCOUNT_SERVICE_ADDR", "http://localhost:50053"),
 	}
 }
 
