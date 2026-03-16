@@ -4,6 +4,9 @@ import (
 	"context"
 	"log"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
@@ -25,7 +28,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
-	defer pool.Close()
 
 	repo := model.NewOrderRepo(pool)
 
@@ -34,7 +36,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to matching engine: %v", err)
 	}
-	defer engineClient.Close()
 
 	// Create account client
 	accountClient := client.NewAccountClient(cfg.AccountServiceAddr)
@@ -44,7 +45,6 @@ func main() {
 
 	// Create Kafka producer
 	producer := mq.NewProducer(cfg.KafkaBrokers)
-	defer producer.Close()
 
 	// Start trade event consumer
 	tradeConsumer := consumer.NewTradeConsumer(repo, accountClient, cfg.KafkaBrokers)
@@ -62,7 +62,21 @@ func main() {
 	pb.RegisterOrderServiceServer(srv, orderServer)
 
 	log.Printf("mantis-order gRPC server starting on :%s", cfg.Port)
-	if err := srv.Serve(lis); err != nil {
-		log.Fatalf("gRPC server error: %v", err)
-	}
+
+	go func() {
+		if err := srv.Serve(lis); err != nil {
+			log.Fatalf("gRPC server error: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("shutting down order service...")
+
+	srv.GracefulStop()
+	engineClient.Close()
+	producer.Close()
+	pool.Close()
+	log.Println("order service stopped")
 }
