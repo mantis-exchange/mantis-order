@@ -76,6 +76,23 @@ func (r *OrderRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status Order
 	return err
 }
 
+// IsTradeSettled checks if a trade has already been settled.
+func (r *OrderRepo) IsTradeSettled(ctx context.Context, tradeID string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM settled_trades WHERE trade_id = $1)`, tradeID,
+	).Scan(&exists)
+	return exists, err
+}
+
+// MarkTradeSettled records a trade as settled.
+func (r *OrderRepo) MarkTradeSettled(ctx context.Context, tradeID string) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO settled_trades (trade_id) VALUES ($1) ON CONFLICT DO NOTHING`, tradeID,
+	)
+	return err
+}
+
 func (r *OrderRepo) ListByUser(ctx context.Context, userID uuid.UUID, limit int) ([]Order, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, user_id, symbol, side, type, price, quantity, filled_quantity, status, created_at, updated_at

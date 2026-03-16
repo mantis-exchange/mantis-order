@@ -56,6 +56,17 @@ func (c *TradeConsumer) Start() {
 }
 
 func (c *TradeConsumer) processTrade(ctx context.Context, trade mq.TradeMessage) {
+	// Idempotency: skip if already settled
+	settled, err := c.repo.IsTradeSettled(ctx, trade.ID)
+	if err != nil {
+		log.Printf("failed to check trade settlement status %s: %v", trade.ID, err)
+		return
+	}
+	if settled {
+		log.Printf("trade %s already settled, skipping", trade.ID)
+		return
+	}
+
 	makerOrderID, err := uuid.Parse(trade.MakerOrderID)
 	if err != nil {
 		log.Printf("invalid maker_order_id: %s", trade.MakerOrderID)
@@ -122,6 +133,11 @@ func (c *TradeConsumer) processTrade(ctx context.Context, trade mq.TradeMessage)
 	c.updateOrderAfterTrade(ctx, makerOrderID, trade.Quantity)
 	c.updateOrderAfterTrade(ctx, takerOrderID, trade.Quantity)
 
+	// Mark trade as settled for idempotency
+	if err := c.repo.MarkTradeSettled(ctx, trade.ID); err != nil {
+		log.Printf("failed to mark trade %s as settled: %v", trade.ID, err)
+	}
+
 	log.Printf("settled trade %s: %s %s @ %s", trade.ID, trade.Quantity, trade.Symbol, trade.Price)
 }
 
@@ -148,7 +164,7 @@ func multiplyStrings(a, b string) string {
 	if fa == nil || fb == nil {
 		return "0"
 	}
-	return new(big.Float).SetPrec(128).Mul(fa, fb).Text('f', 18)
+	return trimZeros(new(big.Float).SetPrec(128).Mul(fa, fb).Text('f', 18))
 }
 
 func addStrings(a, b string) string {
@@ -157,7 +173,21 @@ func addStrings(a, b string) string {
 	if fa == nil || fb == nil {
 		return "0"
 	}
-	return new(big.Float).SetPrec(128).Add(fa, fb).Text('f', 18)
+	return trimZeros(new(big.Float).SetPrec(128).Add(fa, fb).Text('f', 18))
+}
+
+// trimZeros removes unnecessary trailing zeros from a decimal string.
+// "5000.000000000000000000" -> "5000", "0.100000000000000000" -> "0.1"
+func trimZeros(s string) string {
+	if !strings.Contains(s, ".") {
+		return s
+	}
+	s = strings.TrimRight(s, "0")
+	s = strings.TrimRight(s, ".")
+	if s == "" || s == "-" {
+		return "0"
+	}
+	return s
 }
 
 func compareStrings(a, b string) int {

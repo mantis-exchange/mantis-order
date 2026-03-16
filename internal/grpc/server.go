@@ -387,7 +387,7 @@ func multiplyDecimals(a, b string) (string, error) {
 		return "", fmt.Errorf("invalid decimal: %s", b)
 	}
 	result := new(big.Float).SetPrec(128).Mul(fa, fb)
-	return result.Text('f', 18), nil
+	return trimZeros(result.Text('f', 18)), nil
 }
 
 func isPositive(s string) bool {
@@ -405,5 +405,19 @@ func subtractDecimals(a, b string) (string, error) {
 		return "", fmt.Errorf("invalid decimal: %s", b)
 	}
 	result := new(big.Float).SetPrec(128).Sub(fa, fb)
-	return result.Text('f', 18), nil
+	return trimZeros(result.Text('f', 18)), nil
+}
+
+// trimZeros removes unnecessary trailing zeros from a decimal string.
+// "5000.000000000000000000" -> "5000", "0.100000000000000000" -> "0.1"
+func trimZeros(s string) string {
+	if !strings.Contains(s, ".") {
+		return s
+	}
+	s = strings.TrimRight(s, "0")
+	s = strings.TrimRight(s, ".")
+	if s == "" || s == "-" {
+		return "0"
+	}
+	return s
 }
