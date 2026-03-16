@@ -39,6 +39,9 @@ func main() {
 	// Create account client
 	accountClient := client.NewAccountClient(cfg.AccountServiceAddr)
 
+	// Create risk client
+	riskClient := client.NewRiskClient(cfg.RiskServiceAddr)
+
 	// Create Kafka producer
 	producer := mq.NewProducer(cfg.KafkaBrokers)
 	defer producer.Close()
@@ -48,7 +51,7 @@ func main() {
 	go tradeConsumer.Start()
 
 	// Create gRPC server
-	orderServer := ordergrpc.NewOrderServer(repo, engineClient, accountClient, producer)
+	orderServer := ordergrpc.NewOrderServer(repo, engineClient, accountClient, producer, riskClient)
 
 	lis, err := net.Listen("tcp", ":"+cfg.Port)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ type OrderServer struct {
 	engine   *EngineClient
 	account  *client.AccountClient
 	producer *mq.Producer
+	risk     *client.RiskClient
 }
 
 func NewOrderServer(
@@ -31,12 +33,14 @@ func NewOrderServer(
 	engine *EngineClient,
 	account *client.AccountClient,
 	producer *mq.Producer,
+	risk *client.RiskClient,
 ) *OrderServer {
 	return &OrderServer{
 		repo:     repo,
 		engine:   engine,
 		account:  account,
 		producer: producer,
+		risk:     risk,
 	}
 }
 
@@ -80,6 +84,21 @@ func (s *OrderServer) PlaceOrder(ctx context.Context, req *pb.PlaceOrderRequest)
 		// Sell BTC-USDT: freeze quantity of BTC
 		freezeAsset = baseAsset
 		freezeAmount = req.Quantity
+	}
+
+	// Risk check
+	if s.risk != nil {
+		price, _ := strconv.ParseFloat(req.Price, 64)
+		qty, _ := strconv.ParseFloat(req.Quantity, 64)
+		result, err := s.risk.CheckOrder(ctx, client.OrderCheckRequest{
+			Symbol:   req.Symbol,
+			Side:     strings.ToLower(string(side)),
+			Price:    price,
+			Quantity: qty,
+		})
+		if err == nil && !result.Allowed {
+			return nil, status.Errorf(codes.FailedPrecondition, "risk check failed: %s", result.Reason)
+		}
 	}
 
 	// Step 1: Freeze balance
