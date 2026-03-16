@@ -73,37 +73,51 @@ func (s *OrderServer) PlaceOrder(ctx context.Context, req *pb.PlaceOrderRequest)
 
 	var freezeAsset, freezeAmount string
 	side := sideToModel(req.Side)
-	if side == model.SideBuy {
-		// Buy BTC-USDT: freeze price * quantity of USDT
-		freezeAsset = quoteAsset
-		freezeAmount, err = multiplyDecimals(req.Price, req.Quantity)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid price/quantity: %v", err)
+	isMarketOrder := req.OrderType == pb.OrderType_ORDER_TYPE_MARKET
+
+	if !isMarketOrder {
+		// Limit orders: freeze the exact amount
+		if side == model.SideBuy {
+			freezeAsset = quoteAsset
+			freezeAmount, err = multiplyDecimals(req.Price, req.Quantity)
+			if err != nil {
+				return nil, status.Errorf(codes.InvalidArgument, "invalid price/quantity: %v", err)
+			}
+		} else {
+			freezeAsset = baseAsset
+			freezeAmount = req.Quantity
 		}
 	} else {
-		// Sell BTC-USDT: freeze quantity of BTC
-		freezeAsset = baseAsset
-		freezeAmount = req.Quantity
+		// Market orders: freeze sell quantity; for market buy, skip freeze
+		// (settlement handles deduction at actual execution price)
+		if side == model.SideSell {
+			freezeAsset = baseAsset
+			freezeAmount = req.Quantity
+		}
 	}
 
 	// Risk check
 	if s.risk != nil {
 		price, _ := strconv.ParseFloat(req.Price, 64)
 		qty, _ := strconv.ParseFloat(req.Quantity, 64)
-		result, err := s.risk.CheckOrder(ctx, client.OrderCheckRequest{
-			Symbol:   req.Symbol,
-			Side:     strings.ToLower(string(side)),
-			Price:    price,
-			Quantity: qty,
-		})
-		if err == nil && !result.Allowed {
-			return nil, status.Errorf(codes.FailedPrecondition, "risk check failed: %s", result.Reason)
+		if price > 0 { // Skip risk price check for market orders
+			result, err := s.risk.CheckOrder(ctx, client.OrderCheckRequest{
+				Symbol:   req.Symbol,
+				Side:     strings.ToLower(string(side)),
+				Price:    price,
+				Quantity: qty,
+			})
+			if err == nil && !result.Allowed {
+				return nil, status.Errorf(codes.FailedPrecondition, "risk check failed: %s", result.Reason)
+			}
 		}
 	}
 
-	// Step 1: Freeze balance
-	if err := s.account.FreezeBalance(ctx, req.UserId, freezeAsset, freezeAmount); err != nil {
-		return nil, status.Errorf(codes.FailedPrecondition, "failed to freeze balance: %v", err)
+	// Step 1: Freeze balance (skip for market buy — no known price)
+	if freezeAmount != "" {
+		if err := s.account.FreezeBalance(ctx, req.UserId, freezeAsset, freezeAmount); err != nil {
+			return nil, status.Errorf(codes.FailedPrecondition, "failed to freeze balance: %v", err)
+		}
 	}
 
 	// Step 2: Persist order to DB
@@ -140,8 +154,9 @@ func (s *OrderServer) PlaceOrder(ctx context.Context, req *pb.PlaceOrderRequest)
 		OrderId:     orderID.String(),
 	})
 	if err != nil {
-		// Rollback: unfreeze + mark order cancelled
-		_ = s.account.UnfreezeBalance(ctx, req.UserId, freezeAsset, freezeAmount)
+		if freezeAmount != "" {
+			_ = s.account.UnfreezeBalance(ctx, req.UserId, freezeAsset, freezeAmount)
+		}
 		_ = s.repo.UpdateStatus(ctx, orderID, model.StatusCancelled, "0")
 		return nil, status.Errorf(codes.Internal, "matching engine error: %v", err)
 	}
