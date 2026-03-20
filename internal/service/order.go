@@ -57,14 +57,12 @@ func (s *OrderService) PlaceOrder(ctx context.Context, req PlaceOrderRequest) (*
 		UpdatedAt:      now,
 	}
 
-	// TODO: Freeze balance via account service
-
 	// Persist order
 	if err := s.repo.Create(ctx, order); err != nil {
 		return nil, fmt.Errorf("failed to create order: %w", err)
 	}
 
-	// TODO: Submit to matching engine via gRPC
+	// Note: Direct submission handled by gRPC server (internal/grpc/server.go)
 	log.Printf("order %s submitted: %s %s %s @ %s", order.ID, order.Side, order.Quantity, order.Symbol, order.Price)
 
 	return order, nil
@@ -80,13 +78,9 @@ func (s *OrderService) CancelOrder(ctx context.Context, orderID uuid.UUID) (*mod
 		return nil, fmt.Errorf("order %s cannot be cancelled (status: %s)", orderID, order.Status)
 	}
 
-	// TODO: Send cancel to matching engine via gRPC
-
 	if err := s.repo.UpdateStatus(ctx, orderID, model.StatusCancelled, order.FilledQuantity); err != nil {
 		return nil, fmt.Errorf("failed to update order status: %w", err)
 	}
-
-	// TODO: Unfreeze remaining balance
 
 	order.Status = model.StatusCancelled
 	return order, nil
