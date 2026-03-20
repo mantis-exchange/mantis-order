@@ -9,6 +9,8 @@ type Config struct {
 	KafkaBrokers       string
 	AccountServiceAddr string
 	RiskServiceAddr    string
+	MakerFeePct        string
+	TakerFeePct        string
 }
 
 func Load() *Config {
@@ -19,6 +21,8 @@ func Load() *Config {
 		KafkaBrokers:       getEnv("KAFKA_BROKERS", "localhost:9092"),
 		AccountServiceAddr: getEnv("ACCOUNT_SERVICE_ADDR", "http://localhost:50053"),
 		RiskServiceAddr:    getEnv("RISK_SERVICE_ADDR", "http://localhost:50055"),
+		MakerFeePct:        getEnv("MAKER_FEE_PCT", "0.001"),  // 0.1%
+		TakerFeePct:        getEnv("TAKER_FEE_PCT", "0.002"),  // 0.2%
 	}
 }
 

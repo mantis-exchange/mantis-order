@@ -16,13 +16,15 @@ import (
 )
 
 type TradeConsumer struct {
-	repo    *model.OrderRepo
-	account *client.AccountClient
-	brokers string
+	repo     *model.OrderRepo
+	account  *client.AccountClient
+	brokers  string
+	makerFee string
+	takerFee string
 }
 
-func NewTradeConsumer(repo *model.OrderRepo, account *client.AccountClient, brokers string) *TradeConsumer {
-	return &TradeConsumer{repo: repo, account: account, brokers: brokers}
+func NewTradeConsumer(repo *model.OrderRepo, account *client.AccountClient, brokers, makerFee, takerFee string) *TradeConsumer {
+	return &TradeConsumer{repo: repo, account: account, brokers: brokers, makerFee: makerFee, takerFee: takerFee}
 }
 
 func (c *TradeConsumer) Start() {
@@ -113,20 +115,42 @@ func (c *TradeConsumer) processTrade(ctx context.Context, trade mq.TradeMessage)
 	// Calculate quote amount = price * quantity
 	quoteAmount := multiplyStrings(trade.Price, trade.Quantity)
 
-	// Settle buyer: DeductFrozen(quote, price*qty) + Credit(base, qty)
+	// Determine fees - maker gets lower fee, taker gets higher
+	var buyerFeeRate, sellerFeeRate string
+	if trade.MakerSide == "BUY" {
+		buyerFeeRate = c.makerFee
+		sellerFeeRate = c.takerFee
+	} else {
+		buyerFeeRate = c.takerFee
+		sellerFeeRate = c.makerFee
+	}
+
+	// Buyer receives base asset minus fee
+	buyerBaseFee := multiplyStrings(trade.Quantity, buyerFeeRate)
+	buyerBaseReceive := subtractStrings(trade.Quantity, buyerBaseFee)
+
+	// Seller receives quote asset minus fee
+	sellerQuoteFee := multiplyStrings(quoteAmount, sellerFeeRate)
+	sellerQuoteReceive := subtractStrings(quoteAmount, sellerQuoteFee)
+
+	// Settle buyer: DeductFrozen(quote, price*qty) + Credit(base, qty - fee)
 	if err := c.account.DeductFrozenBalance(ctx, buyerOrder.UserID.String(), quoteAsset, quoteAmount); err != nil {
 		log.Printf("failed to deduct frozen for buyer %s: %v", buyerOrder.UserID, err)
 	}
-	if err := c.account.CreditBalance(ctx, buyerOrder.UserID.String(), baseAsset, trade.Quantity); err != nil {
+	if err := c.account.CreditBalance(ctx, buyerOrder.UserID.String(), baseAsset, buyerBaseReceive); err != nil {
 		log.Printf("failed to credit base for buyer %s: %v", buyerOrder.UserID, err)
 	}
 
-	// Settle seller: DeductFrozen(base, qty) + Credit(quote, price*qty)
+	// Settle seller: DeductFrozen(base, qty) + Credit(quote, price*qty - fee)
 	if err := c.account.DeductFrozenBalance(ctx, sellerOrder.UserID.String(), baseAsset, trade.Quantity); err != nil {
 		log.Printf("failed to deduct frozen for seller %s: %v", sellerOrder.UserID, err)
 	}
-	if err := c.account.CreditBalance(ctx, sellerOrder.UserID.String(), quoteAsset, quoteAmount); err != nil {
+	if err := c.account.CreditBalance(ctx, sellerOrder.UserID.String(), quoteAsset, sellerQuoteReceive); err != nil {
 		log.Printf("failed to credit quote for seller %s: %v", sellerOrder.UserID, err)
+	}
+
+	if buyerBaseFee != "0" || sellerQuoteFee != "0" {
+		log.Printf("fees collected: buyer=%s %s, seller=%s %s", buyerBaseFee, baseAsset, sellerQuoteFee, quoteAsset)
 	}
 
 	// Update order filled quantities and statuses
@@ -165,6 +189,19 @@ func multiplyStrings(a, b string) string {
 		return "0"
 	}
 	return trimZeros(new(big.Float).SetPrec(128).Mul(fa, fb).Text('f', 18))
+}
+
+func subtractStrings(a, b string) string {
+	fa, _, _ := new(big.Float).SetPrec(128).Parse(a, 10)
+	fb, _, _ := new(big.Float).SetPrec(128).Parse(b, 10)
+	if fa == nil || fb == nil {
+		return "0"
+	}
+	result := new(big.Float).SetPrec(128).Sub(fa, fb)
+	if result.Sign() < 0 {
+		return "0"
+	}
+	return trimZeros(result.Text('f', 18))
 }
 
 func addStrings(a, b string) string {

@@ -52,6 +52,7 @@ func (s *OrderService) PlaceOrder(ctx context.Context, req PlaceOrderRequest) (*
 		Quantity:       req.Quantity,
 		FilledQuantity: "0",
 		Status:         model.StatusNew,
+		StopPrice:      "",
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}

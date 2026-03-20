@@ -47,7 +47,7 @@ func main() {
 	producer := mq.NewProducer(cfg.KafkaBrokers)
 
 	// Start trade event consumer
-	tradeConsumer := consumer.NewTradeConsumer(repo, accountClient, cfg.KafkaBrokers)
+	tradeConsumer := consumer.NewTradeConsumer(repo, accountClient, cfg.KafkaBrokers, cfg.MakerFeePct, cfg.TakerFeePct)
 	go tradeConsumer.Start()
 
 	// Create gRPC server

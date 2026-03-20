@@ -23,6 +23,7 @@ const (
 	StatusPartiallyFilled OrderStatus = "PARTIALLY_FILLED"
 	StatusFilled          OrderStatus = "FILLED"
 	StatusCancelled       OrderStatus = "CANCELLED"
+	StatusPendingTrigger  OrderStatus = "PENDING_TRIGGER"
 )
 
 type Order struct {
@@ -35,6 +36,7 @@ type Order struct {
 	Quantity       string      `json:"quantity"`
 	FilledQuantity string      `json:"filled_quantity"`
 	Status         OrderStatus `json:"status"`
+	StopPrice      string      `json:"stop_price"`
 	CreatedAt      time.Time   `json:"created_at"`
 	UpdatedAt      time.Time   `json:"updated_at"`
 }
@@ -49,9 +51,9 @@ func NewOrderRepo(pool *pgxpool.Pool) *OrderRepo {
 
 func (r *OrderRepo) Create(ctx context.Context, o *Order) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO orders (id, user_id, symbol, side, type, price, quantity, filled_quantity, status, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		o.ID, o.UserID, o.Symbol, o.Side, o.Type, o.Price, o.Quantity, o.FilledQuantity, o.Status, o.CreatedAt, o.UpdatedAt,
+		`INSERT INTO orders (id, user_id, symbol, side, type, price, quantity, filled_quantity, status, stop_price, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		o.ID, o.UserID, o.Symbol, o.Side, o.Type, o.Price, o.Quantity, o.FilledQuantity, o.Status, o.StopPrice, o.CreatedAt, o.UpdatedAt,
 	)
 	return err
 }
@@ -59,9 +61,9 @@ func (r *OrderRepo) Create(ctx context.Context, o *Order) error {
 func (r *OrderRepo) GetByID(ctx context.Context, id uuid.UUID) (*Order, error) {
 	o := &Order{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, user_id, symbol, side, type, price, quantity, filled_quantity, status, created_at, updated_at
+		`SELECT id, user_id, symbol, side, type, price, quantity, filled_quantity, status, stop_price, created_at, updated_at
 		 FROM orders WHERE id = $1`, id,
-	).Scan(&o.ID, &o.UserID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.FilledQuantity, &o.Status, &o.CreatedAt, &o.UpdatedAt)
+	).Scan(&o.ID, &o.UserID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.FilledQuantity, &o.Status, &o.StopPrice, &o.CreatedAt, &o.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +97,7 @@ func (r *OrderRepo) MarkTradeSettled(ctx context.Context, tradeID string) error 
 
 func (r *OrderRepo) ListByUser(ctx context.Context, userID uuid.UUID, limit int) ([]Order, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, user_id, symbol, side, type, price, quantity, filled_quantity, status, created_at, updated_at
+		`SELECT id, user_id, symbol, side, type, price, quantity, filled_quantity, status, stop_price, created_at, updated_at
 		 FROM orders WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`, userID, limit,
 	)
 	if err != nil {
@@ -106,7 +108,28 @@ func (r *OrderRepo) ListByUser(ctx context.Context, userID uuid.UUID, limit int)
 	var orders []Order
 	for rows.Next() {
 		var o Order
-		if err := rows.Scan(&o.ID, &o.UserID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.FilledQuantity, &o.Status, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.UserID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.FilledQuantity, &o.Status, &o.StopPrice, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			return nil, err
+		}
+		orders = append(orders, o)
+	}
+	return orders, nil
+}
+
+func (r *OrderRepo) ListPendingStopOrders(ctx context.Context, symbol string) ([]Order, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, user_id, symbol, side, type, price, quantity, filled_quantity, status, stop_price, created_at, updated_at
+		 FROM orders WHERE status = 'PENDING_TRIGGER' AND symbol = $1`, symbol,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []Order
+	for rows.Next() {
+		var o Order
+		if err := rows.Scan(&o.ID, &o.UserID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.FilledQuantity, &o.Status, &o.StopPrice, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, err
 		}
 		orders = append(orders, o)
